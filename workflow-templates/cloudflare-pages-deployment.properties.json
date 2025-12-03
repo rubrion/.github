@@ -1,0 +1,7 @@
+{
+  "name": "Cloudflare Pages Deployment",
+  "description": "Deploy your static site or frontend application to Cloudflare Pages with automatic builds and deployments.",
+  "iconName": "cloud",
+  "categories": ["Deployment", "Pages"],
+  "filePatterns": ["package.json"]
+}

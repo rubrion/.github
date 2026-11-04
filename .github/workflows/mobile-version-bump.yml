@@ -1,30 +1,38 @@
 name: Mobile version bump
 
-# Framework-free release-versioning engine, shared by the org's mobile apps
-# (Flutter, Capacitor, …). It derives the next semantic version from
-# Conventional Commits since this app's last tag, writes it back through a
-# per-repo adapter, then commits and tags using a GitHub App installation
-# token — no PRs, no personal access tokens.
+# Framework-free release-versioning engine, shared by every app in the org.
+# It derives the next semantic version from Conventional Commits since this
+# app's last tag, writes it into the app's native version file, then commits
+# and tags using a GitHub App installation token — no PRs, no personal access
+# tokens.
 #
-# A caller supplies: a path-scoped `on: push`, a tag namespace (so monorepo
-# apps don't share a version line), and a `version.sh get|set` adapter that
-# knows where its own version string lives. Nothing here is stack-specific.
+# Zero per-repo code for the common stacks: point `app-dir` at the app and the
+# engine auto-detects Flutter (pubspec.yaml) or Node/Capacitor (package.json).
+# An exotic stack can still supply a `version-script` (get|set) to override.
+#
+# A new app only needs the thin caller (see the "Mobile release" workflow
+# template) plus the one-time org setup (App installed on the repo, the
+# AUTOMATION_APP_PRIVATE_KEY secret, and AUTO_RELEASE=true).
 
 on:
   workflow_call:
     inputs:
-      app-id:
-        description: GitHub App id that authors the release commit and tag.
+      app-dir:
+        description: Path to the app whose version file is auto-detected.
         type: string
-        default: '1117691' # rubrion automation App
+        default: '.'
       tag-prefix:
         description: Tag namespace for this app (keeps monorepo apps apart).
         type: string
         default: v
       version-script:
-        description: Path to the repo's `version.sh get|set` adapter.
+        description: Optional `get|set` adapter for a stack we don't auto-detect.
         type: string
-        default: .github/scripts/version.sh
+        default: ''
+      app-id:
+        description: GitHub App id that authors the release commit and tag.
+        type: string
+        default: '1117691' # rubrion automation App
     secrets:
       app-private-key:
         description: Private key (.pem) of the GitHub App named in `app-id`.
@@ -63,19 +71,38 @@ jobs:
       - name: Plan release
         id: plan
         env:
+          APP_DIR: ${{ inputs.app-dir }}
           TAG_PREFIX: ${{ inputs.tag-prefix }}
           VERSION_SCRIPT: ${{ inputs.version-script }}
         run: |
           set -euo pipefail
-          test -f "$VERSION_SCRIPT" || { echo "::error::missing $VERSION_SCRIPT"; exit 1; }
-          chmod +x "$VERSION_SCRIPT"
 
-          current="$("$VERSION_SCRIPT" get)"
+          # Detect where the version lives. An explicit adapter wins; otherwise
+          # auto-detect the common mobile stacks.
+          if [ -n "$VERSION_SCRIPT" ] && [ -f "$VERSION_SCRIPT" ]; then
+            kind=custom; chmod +x "$VERSION_SCRIPT"
+          elif [ -f "$APP_DIR/pubspec.yaml" ]; then
+            kind=flutter
+          elif [ -f "$APP_DIR/package.json" ]; then
+            kind=node
+          else
+            echo "::error::no version source in '$APP_DIR' (expected pubspec.yaml, package.json, or a version-script)"
+            exit 1
+          fi
+          echo "kind=$kind app_dir=$APP_DIR"
+
+          case "$kind" in
+            custom)  current="$("$VERSION_SCRIPT" get)" ;;
+            flutter) current="$(sed -n 's/^version: *//p' "$APP_DIR/pubspec.yaml" | tr -d ' ' | cut -d'+' -f1)" ;;
+            node)    current="$(node -e "const fs=require('fs');process.stdout.write(JSON.parse(fs.readFileSync('$APP_DIR/package.json','utf8')).version)")" ;;
+          esac
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+
           last_tag="$(git tag --list "${TAG_PREFIX}*" --sort=-v:refname | head -n1 || true)"
           echo "current=$current last_tag=${last_tag:-<none>}"
 
           # Bootstrap: no tag for this app yet. Tag the current version at HEAD so
-          # the NEXT push bumps from a real baseline; don't re-bump historical work.
+          # the NEXT push bumps from a real baseline; don't re-bump history.
           if [ -z "$last_tag" ]; then
             {
               echo "mode=bootstrap"
@@ -132,8 +159,10 @@ jobs:
         if: ${{ steps.plan.outputs.mode != 'none' }}
         env:
           MODE: ${{ steps.plan.outputs.mode }}
+          KIND: ${{ steps.plan.outputs.kind }}
           NEW_TAG: ${{ steps.plan.outputs.new_tag }}
           VERSION: ${{ steps.plan.outputs.version }}
+          APP_DIR: ${{ inputs.app-dir }}
           VERSION_SCRIPT: ${{ inputs.version-script }}
           APP_SLUG: ${{ steps.token.outputs.app-slug }}
           BRANCH: ${{ github.ref_name }}
@@ -149,7 +178,21 @@ jobs:
             exit 0
           fi
 
-          "$VERSION_SCRIPT" set "$VERSION"
+          # Write the new version into the app's native file (same detection).
+          case "$KIND" in
+            custom)
+              "$VERSION_SCRIPT" set "$VERSION" ;;
+            flutter)
+              cur="$(sed -n 's/^version: *//p' "$APP_DIR/pubspec.yaml" | tr -d ' ')"
+              case "$cur" in *+*) b="${cur##*+}" ;; *) b=0 ;; esac
+              case "$b" in ''|*[!0-9]*) b=0 ;; esac
+              tmp="$(mktemp)"
+              sed -E "s/^version: .*/version: ${VERSION}+$((b + 1))/" "$APP_DIR/pubspec.yaml" >"$tmp"
+              mv "$tmp" "$APP_DIR/pubspec.yaml" ;;
+            node)
+              node -e "const fs=require('fs');const f='$APP_DIR/package.json';const p=JSON.parse(fs.readFileSync(f,'utf8'));p.version=process.argv[1];fs.writeFileSync(f,JSON.stringify(p,null,2)+'\n')" "$VERSION" ;;
+          esac
+
           git add -A
           git commit -m "chore(release): ${NEW_TAG} [skip ci]"
           git tag "$NEW_TAG"

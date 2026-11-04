@@ -1,0 +1,35 @@
+name: Release
+
+# Auto-bump this app's semantic version from Conventional Commits and tag it,
+# via the rubrion shared engine (rubrion/.github). No PRs, no PATs.
+#
+# After adding this file from the org templates:
+#   - point `app-dir` at the folder holding pubspec.yaml or package.json
+#   - give `tag-prefix` a unique value if this repo holds more than one app
+#   - narrow `paths:` to that app's folder so unrelated commits don't bump it
+#
+# One-time org setup (done once, inherited by every repo): the rubrion App
+# installed on the repo, the AUTOMATION_APP_PRIVATE_KEY secret, and the
+# AUTO_RELEASE=true variable. Flutter (pubspec.yaml) and Capacitor/Node
+# (package.json) are auto-detected — no adapter needed.
+
+on:
+  push:
+    branches:
+      - $default-branch
+    paths:
+      - '**'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    if: ${{ vars.AUTO_RELEASE == 'true' }}
+    uses: rubrion/.github/.github/workflows/mobile-version-bump.yml@main
+    with:
+      app-dir: '.'
+      tag-prefix: v
+    secrets:
+      app-private-key: ${{ secrets.AUTOMATION_APP_PRIVATE_KEY }}

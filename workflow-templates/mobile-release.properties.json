@@ -1,0 +1,7 @@
+{
+  "name": "Mobile release (auto version bump)",
+  "description": "Auto-bump the app's semantic version from Conventional Commits and tag it via the rubrion shared engine. No PRs, no PATs; Flutter and Capacitor/Node are auto-detected.",
+  "iconName": "tag",
+  "categories": ["Deployment", "Mobile"],
+  "filePatterns": ["pubspec.yaml", "package.json"]
+}

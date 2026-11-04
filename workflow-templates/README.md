@@ -39,14 +39,20 @@ all of this by adding one file.
 Do these once; every current and future repo inherits them. The App (`rubrion`,
 App ID `1117691`) already exists.
 
-1. **Install the `rubrion` App** on the app repos (or "All repositories") with
-   **Repository permissions → Contents: Read and write** and **Metadata: Read**.
+1. **Install the `rubrion` App on only the app repos** — Org settings → GitHub
+   Apps → `rubrion` → Configure → Repository access → **Only select repositories**
+   → pick the app repos. Permissions: **Contents: Read and write** + **Metadata:
+   Read**. Keep it off repos that don't ship an app; it has no reason to touch
+   them (least privilege). A new app repo is added to this list as part of its
+   setup (below).
 2. **Branch protection / rulesets**: on each branch the bump runs on, add the
    `rubrion` App to the **bypass list** so it can push the release commit + tag.
-3. **Org Actions secret** `AUTOMATION_APP_PRIVATE_KEY` = the full contents of a
-   private key (`.pem`) generated for the App.
-4. **Org Actions variable** `AUTO_RELEASE` = `true`. Every caller is gated on it,
-   so nothing runs until it is set — and flipping it off pauses releases org-wide.
+3. **Actions secret** `AUTOMATION_APP_PRIVATE_KEY` = the full contents of a
+   private key (`.pem`) generated for the App. Prefer an **org secret scoped to
+   the selected app repos** (or set it per-repo) — not shared with every repo.
+4. **Actions variable** `AUTO_RELEASE` = `true` (org variable scoped to the app
+   repos, or per-repo). Every caller is gated on it, so nothing runs until it is
+   set — and flipping it off pauses releases.
 
 Until steps 3–4 are done the workflow is dormant (it is skipped, not failed).
 
@@ -65,8 +71,10 @@ Until steps 3–4 are done the workflow is dormant (it is skipped, not failed).
      bump it.
    - `on.push.branches:` — your source-of-truth branch (the template fills in the
      default branch; change it if you release from `develop`).
-3. Confirm the one-time org setup covers this repo (App installed + secret +
-   `AUTO_RELEASE=true`).
+3. **Grant this repo access**: add it to the `rubrion` App's **selected
+   repositories** (Org settings → GitHub Apps → `rubrion` → Configure), and make
+   sure the `AUTOMATION_APP_PRIVATE_KEY` secret and `AUTO_RELEASE=true` variable
+   reach it (org-scoped to the app repos, or set per-repo).
 4. Done. The **first** push to that branch is a **bootstrap**: it tags the current
    version without bumping, to establish a baseline. The next `feat` / `fix` /
    `perf` push bumps and tags.

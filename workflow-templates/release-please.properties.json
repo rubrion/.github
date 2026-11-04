@@ -1,0 +1,7 @@
+{
+  "name": "Release Please (version + changelog)",
+  "description": "Conventional-commits versioning + CHANGELOG via release-please. Pair with release-please-config.json and .release-please-manifest.json (see templates/flutter-store-app).",
+  "iconName": "tag",
+  "categories": ["Automation", "Release"],
+  "filePatterns": ["pubspec.yaml", "package.json"]
+}

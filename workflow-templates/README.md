@@ -34,50 +34,54 @@ all of this by adding one file.
 
 ---
 
-### One-time org setup (admin — once for the whole org)
+### One-time setup (once for the org)
 
-Do these once; every current and future repo inherits them. The App (`rubrion`,
-App ID `1117691`) already exists.
+The App (`rubrion`, App ID `1117691`) already exists. Do this once:
 
-1. **Install the `rubrion` App on only the app repos** — Org settings → GitHub
-   Apps → `rubrion` → Configure → Repository access → **Only select repositories**
-   → pick the app repos. Permissions: **Contents: Read and write** + **Metadata:
-   Read**. Keep it off repos that don't ship an app; it has no reason to touch
-   them (least privilege). A new app repo is added to this list as part of its
-   setup (below).
-2. **Branch protection / rulesets**: on each branch the bump runs on, add the
-   `rubrion` App to the **bypass list** so it can push the release commit + tag.
-3. **Actions secret** `AUTOMATION_APP_PRIVATE_KEY` = the full contents of a
-   private key (`.pem`) generated for the App. Prefer an **org secret scoped to
-   the selected app repos** (or set it per-repo) — not shared with every repo.
-4. **Actions variable** `AUTO_RELEASE` = `true` (org variable scoped to the app
-   repos, or per-repo). Every caller is gated on it, so nothing runs until it is
-   set — and flipping it off pauses releases.
+- **Generate the App private key** (GitHub App → Private keys → Generate a private
+  key) and store it in **Infisical** as the single source of truth:
+  project `infra` · env `prod` · path `/github-app` · secret
+  `AUTOMATION_APP_PRIVATE_KEY`. Every app repo copies this one key; rotate it here.
 
-Until steps 3–4 are done the workflow is dormant (it is skipped, not failed).
+> **Plan note:** on GitHub **Free**, private repos can't read **org-level** Actions
+> secrets, so the key and the on-switch are set **per repo** (copied from
+> Infisical — see the checklist). Upgrade to Team to share them org-wide instead.
+
+Everything else — installing the App on the repo, branch bypass, the repo secret,
+the `AUTO_RELEASE` switch — is per app repo (repo-scoped on Free anyway), in the
+checklist below. The workflow stays dormant (skipped, not failed) until its repo
+has both the secret and `AUTO_RELEASE=true`.
 
 ---
 
 ### When a new app repo is created (per-app checklist)
 
-1. In the repo: **Actions → New workflow → "by rubrion" → Mobile release (auto
-   version bump) → Configure**. This adds `.github/workflows/release.yml`.
-2. Edit four things in that file:
-   - `app-dir:` — the folder holding `pubspec.yaml` or `package.json` (`.` for a
-     single-app repo; e.g. `frontend`, `rubry-app` in a monorepo).
-   - `tag-prefix:` — unique per app so monorepo apps don't share a version line
-     (e.g. `v`, `rubry-app-v`).
-   - `on.push.paths:` — narrow to that app's folder so unrelated commits don't
-     bump it.
-   - `on.push.branches:` — your source-of-truth branch (the template fills in the
+1. **Add the workflow**: Actions → New workflow → "by rubrion" → *Mobile release
+   (auto version bump)* → Configure. This adds `.github/workflows/release.yml`.
+2. **Edit four lines** in it:
+   - `app-dir:` — folder holding `pubspec.yaml` / `package.json` (`.` for a
+     single-app repo; e.g. `frontend`, `rubry-app`).
+   - `tag-prefix:` — unique per app (e.g. `v`, `rubry-app-v`).
+   - `on.push.paths:` — narrow to that app's folder.
+   - `on.push.branches:` — the source-of-truth branch (the template fills in the
      default branch; change it if you release from `develop`).
-3. **Grant this repo access**: add it to the `rubrion` App's **selected
-   repositories** (Org settings → GitHub Apps → `rubrion` → Configure), and make
-   sure the `AUTOMATION_APP_PRIVATE_KEY` secret and `AUTO_RELEASE=true` variable
-   reach it (org-scoped to the app repos, or set per-repo).
-4. Done. The **first** push to that branch is a **bootstrap**: it tags the current
-   version without bumping, to establish a baseline. The next `feat` / `fix` /
-   `perf` push bumps and tags.
+3. **Install the App on this repo**: add it to the `rubrion` App's *selected
+   repositories* (Org settings → GitHub Apps → `rubrion` → Configure; Contents:
+   Read and write). If the release branch is protected, add the App to that
+   branch's **bypass list**.
+4. **Copy the key from Infisical into a repo secret, and flip the switch**:
+   ```bash
+   infisical secrets get AUTOMATION_APP_PRIVATE_KEY \
+     --projectId 4dbb5673-ad94-406d-9363-4634c8763afa --env prod \
+     --path /github-app --type shared --plain --silent \
+     --domain https://infisical.rubrion.ai/api \
+     | gh secret set AUTOMATION_APP_PRIVATE_KEY -R rubrion/<repo>
+   gh variable set AUTO_RELEASE --body true -R rubrion/<repo>
+   ```
+   (Or paste the key from the Infisical UI into the repo's Actions **secret**
+   `AUTOMATION_APP_PRIVATE_KEY`, and add the **variable** `AUTO_RELEASE=true`.)
+5. Done. First push to the release branch = **bootstrap** (tags the current
+   version, no bump); the next `feat` / `fix` / `perf` push bumps and tags.
 
 ---
 

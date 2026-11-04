@@ -73,7 +73,7 @@ has both the secret and `AUTO_RELEASE=true`.
    ```bash
    infisical secrets get AUTOMATION_APP_PRIVATE_KEY \
      --projectId 4dbb5673-ad94-406d-9363-4634c8763afa --env prod \
-     --path /github-app --type shared --plain --silent \
+     --path /github-app --plain --silent \
      --domain https://infisical.rubrion.ai/api \
      | gh secret set AUTOMATION_APP_PRIVATE_KEY -R rubrion/<repo>
    gh variable set AUTO_RELEASE --body true -R rubrion/<repo>

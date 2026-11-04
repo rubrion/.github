@@ -1,0 +1,158 @@
+name: Mobile version bump
+
+# Framework-free release-versioning engine, shared by the org's mobile apps
+# (Flutter, Capacitor, …). It derives the next semantic version from
+# Conventional Commits since this app's last tag, writes it back through a
+# per-repo adapter, then commits and tags using a GitHub App installation
+# token — no PRs, no personal access tokens.
+#
+# A caller supplies: a path-scoped `on: push`, a tag namespace (so monorepo
+# apps don't share a version line), and a `version.sh get|set` adapter that
+# knows where its own version string lives. Nothing here is stack-specific.
+
+on:
+  workflow_call:
+    inputs:
+      app-id:
+        description: GitHub App id that authors the release commit and tag.
+        type: string
+        default: '1117691' # rubrion automation App
+      tag-prefix:
+        description: Tag namespace for this app (keeps monorepo apps apart).
+        type: string
+        default: v
+      version-script:
+        description: Path to the repo's `version.sh get|set` adapter.
+        type: string
+        default: .github/scripts/version.sh
+    secrets:
+      app-private-key:
+        description: Private key (.pem) of the GitHub App named in `app-id`.
+        required: true
+    outputs:
+      released:
+        description: 'true when a new version was committed and tagged'
+        value: ${{ jobs.bump.outputs.released }}
+      version:
+        description: The resulting semver (X.Y.Z)
+        value: ${{ jobs.bump.outputs.version }}
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    # The engine authors its own release commit with [skip ci]; never recurse.
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    outputs:
+      released: ${{ steps.plan.outputs.released }}
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - name: Mint GitHub App token
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ inputs.app-id }}
+          private-key: ${{ secrets.app-private-key }}
+
+      - name: Checkout (full history + tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ steps.token.outputs.token }}
+          persist-credentials: true
+
+      - name: Plan release
+        id: plan
+        env:
+          TAG_PREFIX: ${{ inputs.tag-prefix }}
+          VERSION_SCRIPT: ${{ inputs.version-script }}
+        run: |
+          set -euo pipefail
+          test -f "$VERSION_SCRIPT" || { echo "::error::missing $VERSION_SCRIPT"; exit 1; }
+          chmod +x "$VERSION_SCRIPT"
+
+          current="$("$VERSION_SCRIPT" get)"
+          last_tag="$(git tag --list "${TAG_PREFIX}*" --sort=-v:refname | head -n1 || true)"
+          echo "current=$current last_tag=${last_tag:-<none>}"
+
+          # Bootstrap: no tag for this app yet. Tag the current version at HEAD so
+          # the NEXT push bumps from a real baseline; don't re-bump historical work.
+          if [ -z "$last_tag" ]; then
+            {
+              echo "mode=bootstrap"
+              echo "released=false"
+              echo "version=$current"
+              echo "new_tag=${TAG_PREFIX}${current}"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          base="${last_tag#"$TAG_PREFIX"}"; base="${base%%+*}"
+          range="${last_tag}..HEAD"
+
+          # Conventional Commits -> bump level. Highest wins.
+          level=none
+          if git log "$range" --no-merges --pretty='%s%n%b' \
+               | grep -qE '(^[a-z]+(\(.+\))?!:)|^BREAKING CHANGE'; then
+            level=major
+          elif git log "$range" --no-merges --pretty='%s' \
+               | grep -qE '^feat(\(.+\))?:'; then
+            level=minor
+          elif git log "$range" --no-merges --pretty='%s' \
+               | grep -qE '^(fix|perf)(\(.+\))?:'; then
+            level=patch
+          fi
+          echo "level=$level"
+
+          if [ "$level" = none ]; then
+            {
+              echo "mode=none"
+              echo "released=false"
+              echo "version=$base"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          old_ifs="$IFS"; IFS='.'; set -- $base; IFS="$old_ifs"
+          ma="${1:-0}"; mi="${2:-0}"; pa="${3:-0}"
+          case "$level" in
+            major) ma=$((ma + 1)); mi=0; pa=0 ;;
+            minor) mi=$((mi + 1)); pa=0 ;;
+            patch) pa=$((pa + 1)) ;;
+          esac
+          next="${ma}.${mi}.${pa}"
+          echo "bump $level: $base -> $next"
+          {
+            echo "mode=release"
+            echo "released=true"
+            echo "version=$next"
+            echo "new_tag=${TAG_PREFIX}${next}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Apply, commit and tag
+        if: ${{ steps.plan.outputs.mode != 'none' }}
+        env:
+          MODE: ${{ steps.plan.outputs.mode }}
+          NEW_TAG: ${{ steps.plan.outputs.new_tag }}
+          VERSION: ${{ steps.plan.outputs.version }}
+          VERSION_SCRIPT: ${{ inputs.version-script }}
+          APP_SLUG: ${{ steps.token.outputs.app-slug }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git config user.name  "${APP_SLUG}[bot]"
+          git config user.email "${APP_SLUG}[bot]@users.noreply.github.com"
+
+          if [ "$MODE" = bootstrap ]; then
+            git tag "$NEW_TAG"
+            git push origin "refs/tags/${NEW_TAG}"
+            echo "baseline tag ${NEW_TAG} created"
+            exit 0
+          fi
+
+          "$VERSION_SCRIPT" set "$VERSION"
+          git add -A
+          git commit -m "chore(release): ${NEW_TAG} [skip ci]"
+          git tag "$NEW_TAG"
+          git push origin "HEAD:${BRANCH}"
+          git push origin "refs/tags/${NEW_TAG}"
+          echo "released ${NEW_TAG}"

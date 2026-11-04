@@ -1,15 +1,14 @@
-# Flutter → Play Store + App Store, template.
+# Flutter → Play Store + App Store, template (push-based versioning).
 # Replace every CHANGE_ME. Branch decides env: main → prod, else → staging.
 #
-# Versioning model (works for BOTH stores):
-#   • semver (X.Y.Z) lives in pubspec `version:` — bumped by release-please from
-#     Conventional Commits (see release-please-config.json + the release-please
-#     workflow). Do NOT hand-edit it.
-#   • build number (Android versionCode / iOS CFBundleVersion) is injected here as
+# Versioning model (no release PRs — fits a solo maintainer):
+#   • semver (X.Y.Z): the pubspec `version:` line — bump it by hand per release.
+#   • build number (Android versionCode / iOS CFBundleVersion): injected here as
 #     $PROJECT_BUILD_NUMBER — Codemagic's project-wide monotonic counter, shared
 #     by both workflows, so uploads are always unique + increasing on each store.
-#   • "what's new" per store comes from the latest CHANGELOG.md section
-#     (release_notes.txt), generated below.
+#     (Set the project build number above the latest store versionCode once.)
+#   • "what's new": generated at build from Conventional Commits since the last
+#     release tag; each release is tagged (best-effort) to move the baseline.
 
 workflows:
   android-playstore:
@@ -22,7 +21,7 @@ workflows:
       android_signing:
         - CHANGE_ME_keystore_reference      # uploaded in Codemagic code signing
       groups:
-        - CHANGE_ME_env_group               # holds GCLOUD_SERVICE_ACCOUNT_CREDENTIALS, GOOGLE_PLAY_TRACK
+        - CHANGE_ME_env_group               # GCLOUD_SERVICE_ACCOUNT_CREDENTIALS, GOOGLE_PLAY_TRACK
     working_directory: frontend
     scripts:
       - name: Get Flutter dependencies
@@ -50,13 +49,21 @@ workflows:
             --build-number="$PROJECT_BUILD_NUMBER" \
             --dart-define-from-file=$ENV_FILE \
             --dart-define=APP_VERSION="$APP_VERSION"
-      - name: Release notes from CHANGELOG
+      - name: Release notes from commits
         script: |
-          if [ -f CHANGELOG.md ]; then
-            awk '/^## /{n++} n==1{print} n==2{exit}' CHANGELOG.md > release_notes.txt
-          fi
-          [ -s release_notes.txt ] || echo "Build $PROJECT_BUILD_NUMBER" > release_notes.txt
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          RANGE="${LAST_TAG:+$LAST_TAG..}HEAD"
+          git log $RANGE --no-merges --pretty='%s' 2>/dev/null \
+            | grep -E '^(feat|fix|perf)(\(.+\))?!?:' \
+            | sed -E 's/^(feat|fix|perf)(\(.+\))?!?: */- /' > release_notes.txt || true
+          [ -s release_notes.txt ] || echo "- Improvements and fixes" > release_notes.txt
           cat release_notes.txt
+      - name: Tag this release (best-effort)
+        script: |
+          APP_VERSION=$(sed -n 's/^version: *//p' pubspec.yaml | tr -d ' ' | cut -d+ -f1)
+          TAG="v${APP_VERSION}+${PROJECT_BUILD_NUMBER}"
+          git tag "$TAG" 2>/dev/null && git push origin "$TAG" 2>/dev/null \
+            && echo "tagged $TAG" || echo "tag skipped (exists or no push rights)"
     artifacts:
       - build/app/outputs/bundle/release/app-release.aab
       - release_notes.txt
@@ -109,8 +116,6 @@ workflows:
     artifacts:
       - build/ios/ipa/*.ipa
     publishing:
-      # Add release notes via app_store_connect / fastlane deliver using
-      # release_notes.txt (same source as Android).
       app_store_connect:
         auth: integration
         submit_to_testflight: true

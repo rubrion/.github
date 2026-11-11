@@ -1,0 +1,106 @@
+name: Board snapshot (engine)
+
+# Client-facing PDF of a project's GitHub board (done, in progress, planned, with
+# dates), shared by every client project in the org. Runs rubrion/delivery's
+# `snapshot` on the caller's scope.yml, then: uploads the PDF as a workflow
+# artifact, optionally commits it next to the scope, optionally uploads it to R2.
+#
+# A project only needs the thin caller (see the "Board snapshot" workflow template)
+# plus the per-repo setup in workflow-templates/README.md.
+
+on:
+  workflow_call:
+    inputs:
+      scope:
+        description: Path to the project's scope.yml.
+        type: string
+        default: delivery/scope.yml
+      commit:
+        description: Commit the PDF next to the scope (snapshot.out/snapshot.file).
+        type: boolean
+        default: true
+      r2:
+        description: Upload to R2 (snapshot.r2 in scope.yml); needs the Cloudflare secrets.
+        type: boolean
+        default: false
+      delivery-ref:
+        description: Ref of rubrion/delivery to run.
+        type: string
+        default: main
+      app-id:
+        description: GitHub App that reads the board and commits the PDF.
+        type: string
+        default: '1117691' # rubrion automation App
+    secrets:
+      app-private-key:
+        description: Private key (.pem) of the GitHub App named in `app-id`.
+        required: true
+      cloudflare-api-token:
+        description: Token with R2 write on the snapshot bucket (only with r2).
+        required: false
+      cloudflare-account-id:
+        required: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Mint GitHub App token (this repo + rubrion/delivery, board read)
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ inputs.app-id }}
+          private-key: ${{ secrets.app-private-key }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }},delivery
+
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ steps.token.outputs.token }}
+
+      - uses: actions/checkout@v4
+        with:
+          repository: rubrion/delivery
+          ref: ${{ inputs.delivery-ref }}
+          path: .delivery
+          token: ${{ steps.token.outputs.token }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: .delivery/package-lock.json
+
+      - run: npm ci --prefix .delivery
+
+      - name: Generate snapshot
+        id: snap
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.cloudflare-api-token }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.cloudflare-account-id }}
+          SCOPE: ${{ inputs.scope }}
+          R2: ${{ inputs.r2 }}
+        run: |
+          args=("$SCOPE")
+          [ "$R2" = "true" ] && args+=(--r2)
+          node .delivery/bin/snapshot.mjs "${args[@]}" | tee snapshot.log
+          echo "pdf=$(grep -m1 '\.pdf$' snapshot.log)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: board-snapshot
+          path: ${{ steps.snap.outputs.pdf }}
+          retention-days: 90
+
+      - name: Commit the PDF
+        if: ${{ inputs.commit }}
+        env:
+          PDF: ${{ steps.snap.outputs.pdf }}
+        run: |
+          git add -- "$PDF"
+          git diff --cached --quiet && { echo "No change."; exit 0; }
+          git -c user.name="rubrion[bot]" -c user.email="1117691+rubrion[bot]@users.noreply.github.com" \
+            commit -m "docs(delivery): board snapshot $(date -u +%F) [skip ci]"
+          git push

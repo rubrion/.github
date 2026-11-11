@@ -7,6 +7,7 @@ rubrion"**. Each is a `*.yml` paired with a `*.properties.json`.
 |---|---|
 | **Mobile release (auto version bump)** (`mobile-release.yml`) | Auto-bumps an app's semantic version from Conventional Commits and tags it. |
 | **Cloudflare Pages Deployment** (`cloudflare-pages-deployment.yml`) | Builds and deploys a static site / frontend to Cloudflare Pages. |
+| **Board snapshot** (`board-snapshot.yml`) | Weekly client PDF of a project's GitHub board, from its `scope.yml` ([rubrion/delivery](https://github.com/rubrion/delivery)). |
 
 ---
 
@@ -99,3 +100,50 @@ has both the secret and `AUTO_RELEASE=true`.
 
 - avilink-monorepo — `app-dir: frontend`, `tag-prefix: v`, on `develop`.
 - rubry-monorepo — `app-dir: rubry-app`, `tag-prefix: rubry-app-v`, on `main`.
+
+---
+
+## Board snapshot — the client's progress PDF
+
+`board-snapshot.yml` wires a client project to the shared engine
+[`.github/workflows/board-snapshot.yml`](../.github/workflows/board-snapshot.yml),
+which runs [rubrion/delivery](https://github.com/rubrion/delivery)'s `snapshot` on
+the project's `scope.yml`: a PDF in the Rubrion print theme with every stage, its
+dates and what is done, in progress and planned, read from the board.
+
+- **Monday 09:00 (Brasília)** and **manual runs**: regenerated and committed next to
+  the scope (`snapshot.out` / `snapshot.file`), with `[skip ci]`.
+- **Issue or milestone closed**: regenerated without a commit (workflow artifact,
+  and R2 when on), so the latest copy is always one click away.
+- **R2** (`r2: true`): also uploads `<prefix>/<file>` (latest) and
+  `<prefix>/<date>-<file>` to `snapshot.r2.bucket`.
+
+### One-time setup (once for the org)
+
+On the `rubrion` App (Org settings → GitHub Apps → `rubrion` → Permissions):
+**Organization → Projects: Read**, **Repository → Issues: Read**, **Contents:
+Read and write**. Add **`rubrion/delivery`** to its selected repositories (the
+engine checks it out with the App token).
+
+### When a client project gets a board (per-repo checklist)
+
+1. **scope.yml**: create it with the `rubrion-board-scope` skill (new board from a
+   spec, or `scope-import` for an existing board), commit it.
+2. **Add the workflow**: Actions → New workflow → "by rubrion" → *Board snapshot*
+   → Configure. Set `scope:` to the file's path.
+3. **Install the App on this repo** (selected repositories, as above). If the
+   default branch is protected, add the App to its bypass list.
+4. **Secret and switch**:
+   ```bash
+   infisical secrets get AUTOMATION_APP_PRIVATE_KEY \
+     --projectId 4dbb5673-ad94-406d-9363-4634c8763afa --env prod \
+     --path /github-app --plain --silent \
+     --domain https://infisical.rubrion.ai/api \
+     | gh secret set AUTOMATION_APP_PRIVATE_KEY -R rubrion/<repo>
+   gh variable set BOARD_SNAPSHOT --body true -R rubrion/<repo>
+   ```
+5. **R2 (optional)**: `snapshot.r2` in scope.yml, `r2: true` in the caller, and the
+   repo secrets `CLOUDFLARE_API_TOKEN` (R2 write on that bucket) and
+   `CLOUDFLARE_ACCOUNT_ID`.
+6. **Check**: Actions → Board snapshot → Run workflow; the PDF is in the run's
+   artifacts and committed.

@@ -83,10 +83,13 @@ jobs:
           SCOPE: ${{ inputs.scope }}
           R2: ${{ inputs.r2 }}
         run: |
+          set -o pipefail
           args=("$SCOPE")
           [ "$R2" = "true" ] && args+=(--r2)
           node .delivery/bin/snapshot.mjs "${args[@]}" | tee snapshot.log
-          echo "pdf=$(grep -m1 '\.pdf$' snapshot.log)" >> "$GITHUB_OUTPUT"
+          pdf=$(grep -m1 '\.pdf$' snapshot.log)
+          [ -n "$pdf" ] || { echo "::error::snapshot did not print the PDF path"; exit 1; }
+          echo "pdf=$pdf" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4
         with:

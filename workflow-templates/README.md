@@ -7,7 +7,7 @@ rubrion"**. Each is a `*.yml` paired with a `*.properties.json`.
 |---|---|
 | **Mobile release (auto version bump)** (`mobile-release.yml`) | Auto-bumps an app's semantic version from Conventional Commits and tags it. |
 | **Cloudflare Pages Deployment** (`cloudflare-pages-deployment.yml`) | Builds and deploys a static site / frontend to Cloudflare Pages. |
-| **Board snapshot** (`board-snapshot.yml`) | Weekly client PDF of a project's GitHub board, from its `scope.yml` ([rubrion/delivery](https://github.com/rubrion/delivery)). |
+| **Board snapshot** (`board-snapshot.yml`) | On-demand client PDF of a project's GitHub board, from its `scope.yml` ([rubrion/delivery](https://github.com/rubrion/delivery)). |
 
 ---
 
@@ -111,10 +111,10 @@ which runs [rubrion/delivery](https://github.com/rubrion/delivery)'s `snapshot` 
 the project's `scope.yml`: a PDF in the Rubrion print theme with every stage, its
 dates and what is done, in progress and planned, read from the board.
 
-- **Monday 09:00 (Brasília)** and **manual runs**: regenerated and committed next to
-  the scope (`snapshot.out` / `snapshot.file`), with `[skip ci]`.
-- **Issue or milestone closed**: regenerated without a commit (workflow artifact,
-  and R2 when on), so the latest copy is always one click away.
+- **On demand** (Actions → Board snapshot → Run workflow): regenerated and
+  committed next to the scope (`snapshot.out` / `snapshot.file`), with `[skip ci]`,
+  and kept as a workflow artifact. Run it once the board is current: the PDF is
+  only as true as the board.
 - **R2** (`r2: true`): also uploads `<prefix>/<file>` (latest) and
   `<prefix>/<date>-<file>` to `snapshot.r2.bucket`.
 
@@ -122,7 +122,8 @@ dates and what is done, in progress and planned, read from the board.
 
 On the `rubrion` App (Org settings → GitHub Apps → `rubrion` → Permissions):
 **Organization → Projects: Read**, **Repository → Issues: Read**, **Contents:
-Read and write**. Add **`rubrion/delivery`** to its selected repositories (the
+Read and write**, then accept the new permissions on the org installation
+(Installed GitHub Apps → `rubrion` → Review request). Add **`rubrion/delivery`** to its selected repositories (the
 engine checks it out with the App token).
 
 ### When a client project gets a board (per-repo checklist)

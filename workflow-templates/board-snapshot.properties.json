@@ -1,6 +1,6 @@
 {
   "name": "Board snapshot",
-  "description": "Weekly client PDF of the project's GitHub board (done, in progress, planned, with dates) from scope.yml, via rubrion/delivery. Committed, kept as an artifact, optionally in R2.",
+  "description": "On-demand client PDF of the project's GitHub board (done, in progress, planned, with dates) from scope.yml, via rubrion/delivery. Committed and kept as an artifact, optionally in R2.",
   "iconName": "file",
   "categories": [
     "Automation"

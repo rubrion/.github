@@ -7,20 +7,14 @@ name: Board snapshot
 #   - point `scope` at this project's scope.yml (created with the rubrion-board-scope skill)
 #   - r2: true to also keep the latest PDF in R2 (snapshot.r2 in scope.yml + Cloudflare secrets)
 #
-# Weekly on Monday 09:00 (Brasília) the PDF is regenerated and committed. Closing an
-# issue or a milestone regenerates it without committing (artifact, and R2 if on).
-# Manual run: Actions → Board snapshot → Run workflow.
+# On demand: Actions → Board snapshot → Run workflow (or ask Claude: the
+# rubrion-board-snapshot skill does the same locally). Run it after the board is
+# current: the PDF is only as true as the board. Each run commits the PDF.
 # Per-repo setup: the rubrion App installed here, AUTOMATION_APP_PRIVATE_KEY, and
 # the BOARD_SNAPSHOT=true variable (see workflow-templates/README.md).
 
 on:
-  schedule:
-    - cron: '0 12 * * 1'
   workflow_dispatch:
-  issues:
-    types: [closed, reopened]
-  milestone:
-    types: [closed]
 
 concurrency:
   group: board-snapshot
@@ -32,7 +26,7 @@ jobs:
     uses: rubrion/.github/.github/workflows/board-snapshot.yml@main
     with:
       scope: delivery/scope.yml
-      commit: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+      commit: true
       r2: false
     secrets:
       app-private-key: ${{ secrets.AUTOMATION_APP_PRIVATE_KEY }}

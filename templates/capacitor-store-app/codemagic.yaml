@@ -1,0 +1,195 @@
+# Capacitor store-app pipeline (Codemagic) — TEMPLATE.
+#
+# Copy this file to a new Capacitor app repo as `codemagic.yaml` (repo root) and
+# replace every CHANGE_ME_*. It builds the signed Android AAB + iOS IPA and
+# publishes them: Android to Google Play (track follows the branch), iOS to
+# TestFlight.
+#
+# Canonical live reference: rubrion/rubry-monorepo/codemagic.yaml. Codemagic has
+# no cross-repo include, so this is a COPY — when the live pipeline changes, sync
+# this file. For a FLUTTER app, copy rubrion/avilink-monorepo/codemagic.yaml.
+#
+# Versioning is NOT here: the version NAME (package.json "version") is auto-bumped
+# from Conventional Commits by the shared GitHub Actions engine (add the
+# workflow-templates/mobile-release.yml workflow to the repo). This pipeline only
+# reads that name and sets the build number to the store's latest + 1.
+#
+# Credentials:
+#   - Android keystore `rubrion-release` + the App Store Connect API key
+#     integration: team-level in Codemagic, shared across the org's apps.
+#   - Per-app env group CHANGE_ME_env_group with one secure variable:
+#       GCLOUD_SERVICE_ACCOUNT_CREDENTIALS  the Play service-account JSON (whole
+#                                           file), with access to CHANGE_ME_app_id
+#                                           in Play Console.
+#   - Play track follows the branch in the publish step: `production` branch ->
+#     production track, every other branch -> internal.
+#
+# Before the FIRST production release (Play Console, one-time per app):
+#   - App access: if the app is behind login, give reviewers a demo account + a
+#     way past phone/email OTP (a test account with OTP bypass, or a fixed test
+#     code) — reviewers can't receive your SMS/WhatsApp/email code.
+#   - Data safety: declare the PII collected (e.g. phone number, email).
+#   - Account deletion: provide an in-app or web account-deletion path.
+#   - Org developer accounts are exempt from the closed-testing gate, but the
+#     first production release may need to be created manually as a draft; after
+#     that the scripted `completed` releases work.
+
+workflows:
+
+  android-playstore:
+    name: CHANGE_ME_app_name · Android · Google Play (AAB)
+    max_build_duration: 45
+    instance_type: mac_mini_m2
+
+    environment:
+      node: 22
+      java: 21
+      android_signing:
+        - rubrion-release
+      groups:
+        - CHANGE_ME_env_group
+      vars:
+        PACKAGE_NAME: CHANGE_ME_app_id # e.g. ai.rubry / br.com.yourapp
+
+    working_directory: CHANGE_ME_app_dir # e.g. rubry-app
+
+    scripts:
+      - name: Install dependencies
+        script: npm ci
+
+      - name: Sync Capacitor
+        script: npx cap sync android
+
+      # Codemagic injects CM_KEYSTORE_PATH / CM_KEYSTORE_PASSWORD / CM_KEY_ALIAS /
+      # CM_KEY_PASSWORD from the `rubrion-release` identity; Gradle reads
+      # android/key.properties (android/app/build.gradle).
+      - name: Set up release signing
+        script: |
+          cat > android/key.properties <<EOF
+          storeFile=$CM_KEYSTORE_PATH
+          storePassword=$CM_KEYSTORE_PASSWORD
+          keyAlias=$CM_KEY_ALIAS
+          keyPassword=$CM_KEY_PASSWORD
+          EOF
+
+      - name: Set version
+        script: |
+          # Build number = store's latest + 1 (or Codemagic's counter if the store
+          # has none yet), so a reused versionCode is never uploaded. VERSION_NAME
+          # is the package.json version (auto-bumped by the release engine).
+          LATEST=$(google-play get-latest-build-number --package-name "$PACKAGE_NAME" 2>/dev/null || echo "")
+          VERSION_CODE=$BUILD_NUMBER
+          if [ -n "$LATEST" ] && [ "$LATEST" -ge 0 ] 2>/dev/null && [ $((LATEST + 1)) -gt "$VERSION_CODE" ]; then
+            VERSION_CODE=$((LATEST + 1))
+          fi
+          VERSION_NAME=$(node -p "require('./package.json').version")
+          echo "VERSION_CODE=$VERSION_CODE" >> "$CM_ENV"
+          echo "VERSION_NAME=$VERSION_NAME" >> "$CM_ENV"
+          echo "$VERSION_NAME ($VERSION_CODE)"
+
+      - name: Build release AAB
+        script: cd android && ./gradlew bundleRelease
+
+      - name: Publish AAB to Google Play
+        script: |
+          # Track follows the branch (Codemagic validates declarative
+          # publishing.*.track before scripts run, so it can't read a runtime
+          # var): production branch -> production track, else -> internal.
+          if [ "$CM_BRANCH" = "production" ]; then TRACK=production; else TRACK=internal; fi
+          echo "Publishing $PACKAGE_NAME to track: $TRACK"
+          printf '%s' "$GCLOUD_SERVICE_ACCOUNT_CREDENTIALS" > play-key.json
+          fastlane supply \
+            --package_name "$PACKAGE_NAME" \
+            --aab android/app/build/outputs/bundle/release/app-release.aab \
+            --track "$TRACK" \
+            --release_status completed \
+            --json_key play-key.json \
+            --skip_upload_metadata true \
+            --skip_upload_images true \
+            --skip_upload_screenshots true \
+            --skip_upload_changelogs true
+          rm -f play-key.json
+
+    artifacts:
+      - android/app/build/outputs/bundle/release/app-release.aab
+
+    publishing:
+      # Google Play upload is scripted above (fastlane supply) so the track can
+      # follow the branch. If this app has never had a production release, Google
+      # may require the first one as a draft ("Only releases with status draft may
+      # be created on draft app") — create it manually in the Console once, then
+      # the scripted `completed` releases work.
+      email:
+        recipients:
+          - hello@rubrion.ai
+        notify:
+          success: true
+          failure: true
+
+  ios-appstore:
+    name: CHANGE_ME_app_name · iOS · TestFlight (IPA)
+    max_build_duration: 45
+    instance_type: mac_mini_m2
+
+    integrations:
+      app_store_connect: CHANGE_ME_asc_integration # shared ASC API key integration
+
+    environment:
+      node: 22
+      xcode: latest
+      groups:
+        - CHANGE_ME_env_group
+      vars:
+        BUNDLE_ID: CHANGE_ME_app_id
+        XCODE_PROJECT: ios/App/App.xcodeproj
+        XCODE_SCHEME: App
+
+    working_directory: CHANGE_ME_app_dir
+
+    scripts:
+      - name: Install dependencies
+        script: npm ci
+
+      - name: Sync Capacitor
+        script: npx cap sync ios
+
+      - name: Set up iOS code signing
+        script: |
+          keychain initialize
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --create
+          keychain add-certificates
+          xcode-project use-profiles --project "$XCODE_PROJECT"
+
+      - name: Set version
+        script: |
+          LATEST=$(app-store-connect builds list --bundle-id-identifier "$BUNDLE_ID" --json 2>/dev/null \
+            | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const v=JSON.parse(s).map(b=>+b.attributes.version).filter(n=>n>0);console.log(v.length?Math.max(...v):"")}catch{console.log("")}})')
+          BUILD=$([ -n "$LATEST" ] && echo $((LATEST + 1)) || echo "$BUILD_NUMBER")
+          VERSION_NAME=$(node -p "require('./package.json').version")
+          echo "BUILD=$BUILD" >> "$CM_ENV"
+          echo "VERSION_NAME=$VERSION_NAME" >> "$CM_ENV"
+          echo "$VERSION_NAME ($BUILD)"
+
+      - name: Build signed IPA
+        script: |
+          xcode-project build-ipa \
+            --project "$XCODE_PROJECT" \
+            --scheme "$XCODE_SCHEME" \
+            --archive-xcargs "CURRENT_PROJECT_VERSION=$BUILD MARKETING_VERSION=$VERSION_NAME"
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+      email:
+        recipients:
+          - hello@rubrion.ai
+        notify:
+          success: true
+          failure: true

@@ -11,6 +11,21 @@ rubrion"**. Each is a `*.yml` paired with a `*.properties.json`.
 
 ---
 
+## Codemagic store pipelines (not GitHub Actions)
+
+The Android/iOS store build + publish runs in **Codemagic** (`codemagic.yaml` at
+the repo root), which GitHub's template picker doesn't cover. Start a new native
+app from:
+
+- **Capacitor:** [`templates/capacitor-store-app/`](../templates/capacitor-store-app/)
+  — copy its `codemagic.yaml`, replace the `CHANGE_ME_*`, follow its README.
+- **Flutter:** copy `rubrion/avilink-monorepo/codemagic.yaml` (the live reference).
+
+Both publish to a branch-derived Play track and pair with the **Mobile release**
+versioning template above.
+
+---
+
 ## Mobile release — automatic app versioning
 
 `mobile-release.yml` wires an app repo to the shared, framework-free engine
